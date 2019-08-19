@@ -1,0 +1,695 @@
+---
+title: '**Supplementary Results 2** accompaying the paper *Weak biases emerging from vocal tract anatomy shape the repeated transmission of vowels*.'
+author: "Dan Dediu, Rick Janssen & Scott Moisik"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: kable
+    highlight: tango
+    theme: spacelab
+    toc: yes
+    toc_depth: 6
+    toc_float: no
+    toc_collapsed: no
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r non-compilation error, include=TRUE, echo=FALSE, message=FALSE, results='hide'}
+
+###########################################################################################################
+#
+# Please note that this script encapsulates all the analyses that depend on the 3D intra-oral scaning data.
+# However, as these data potentially represents a privacy concern (as it may allow the identification of
+# our participants), they are *not* included with the publicly released version of the materials.
+#
+# Therefore, this script *cannot be compiled* with the provided data (as a whole or in part) and is
+# provided for inspection and (potential) reuse and extension (in whole or in part).
+#
+###########################################################################################################
+
+if( !(file.exists("./data-3DIOS-not-public/vertex_lower_jaw.tsv.xz") & file.exists("./data-3DIOS-not-public/vertex_upper_jaw.tsv.xz")) )
+{
+  stop("The 3D coordinate files (in ./data-3DIOS-not-public) are missing due to participant privacy concerns: unfortunately, the script cannot be compiled at this time.\nNevertheless, the script is provided for inspection and potential (partial) reuse...\n");
+}
+```
+
+
+```{r setup, include=TRUE, echo=FALSE, message=FALSE, results='hide'}
+# To increase figure quality, either comment the following line or change the driver ("dev") and/or the resolution ("dpi") as needed (please note that this will likely affect file size)
+knitr::opts_chunk$set(warning=FALSE, 
+                      cache=!(.Platform$OS.type == "windows"), cache.lazy=!(.Platform$OS.type == "windows"), # under Windows, caching very large objects crashes the rmarkdown compilation
+                      dev="jpeg", dpi=72); # dev="jpeg"; when using dev="CairoJPEG", make sure to install package "Cairo"
+```
+
+```{r load libraries and setup stuff, echo=FALSE, message=FALSE, warning=FALSE}
+library(plotrix); # plotting ellipses
+library(Morpho); # Geometric morphometrics
+library(geomorph); # Geometric morphometrics
+library(car); # scatterplot
+library(lattice); # histograms
+library(rgl); # interactive 3D plotting
+library(pander); # display session info in a nice way
+
+
+alpha.level <- 0.05; # alpha level to use throughout
+
+# Participant info:
+ppt_info <- read.table("./data/participant_info.csv", header=TRUE, sep="\t", quote="", stringsAsFactors=FALSE);
+
+# permutation 95%CIs:
+.compute.perm.95CI <- function(observed, permuted, ci=0.95)
+{
+  permuted <- sort(permuted, decreasing=FALSE);
+  return (c("low"= as.numeric(permuted[ round(length(permuted) * (1 - ci)/2) ]), 
+            "high"=as.numeric(permuted[ round(length(permuted) * (ci + (1 - ci)/2)) ])));
+}
+
+# Read the 3D coords:
+if( !file.exists("./cache/3D-coords-CVA+PCA.RData") ) # takes about 35 mins on an AMD Ryzen 2700X using 3 threads for OpenBLAS
+{
+  if( file.exists("./data-3DIOS-not-public/vertex_lower_jaw.tsv.xz") & file.exists("./data-3DIOS-not-public/vertex_upper_jaw.tsv.xz") )
+  {
+    library(parallel);
+    
+    # The number of OpenBLAS parallel threads to use (please pay attention as there's also explicit parallel processing down the line):
+    use_openblas_threads <- 3;
+    if( require("RhpcBLASctl", quietly=TRUE) ){ require(utils); (capture.output(blas_set_num_threads(use_openblas_threads))); }
+    Sys.setenv(OMP_NUM_THREADS=use_openblas_threads);
+    Sys.setenv(MKL_NUM_THREADS=use_openblas_threads);
+    Sys.setenv(MKL_DOMAIN_NUM_THREADS=use_openblas_threads);
+    
+    # Load the 3D coordinates:
+    jaw_lower <- read.table(xzfile("./data-3DIOS-not-public/vertex_lower_jaw.tsv.xz"), header=TRUE, sep="\t", quote="", stringsAsFactors=FALSE);
+    jaw_upper <- read.table(xzfile("./data-3DIOS-not-public/vertex_upper_jaw.tsv.xz"), header=TRUE, sep="\t", quote="", stringsAsFactors=FALSE);
+    
+    # Convert to the k x m x n representation:
+    jaw_upper_array <- array(unlist(t(jaw_upper[,-1])), # exclude the ID column and linearize the data by rows
+                             dim=c((ncol(jaw_upper)-1)/3, # the number of points (=k)
+                                   3, # the number of dimensions (=m)
+                                   nrow(jaw_upper)), # number of participants (=n)
+                             dimnames=list(point=1:((ncol(jaw_upper)-1)/3), # and dimension names
+                                           coordinate=c("x","y","z"),
+                                           participant=jaw_upper$ID)
+    ); 
+    jaw_lower_array <- array(unlist(t(jaw_lower[,-1])), # exclude the ID column and linearize the data by rows
+                             dim=c((ncol(jaw_lower)-1)/3, # the number of points (=k)
+                                   3, # the number of dimensions (=m)
+                                   nrow(jaw_lower)), # number of participants (=n)
+                             dimnames=list(point=1:((ncol(jaw_lower)-1)/3), # and dimension names
+                                           coordinate=c("x","y","z"),
+                                           participant=jaw_lower$ID)
+    ); 
+    
+    # Groups and sexes per participant:
+    groups_m <- as.factor(vapply(dimnames(jaw_lower_array)$participant, function(s) ppt_info$group[ ppt_info$ID_original == s ], character(1)));
+    sex_m    <- as.factor(vapply(dimnames(jaw_lower_array)$participant, function(s) ppt_info$sex[ ppt_info$ID_original == s ], character(1)));
+    
+    # CVA:
+    gc();
+    start_time_cva_caching <- Sys.time();
+    jaw_cva <- mclapply(list("lower.group"=list("data"=jaw_lower_array, "grouping"=ppt_info$group), 
+                             "lower.sex"  =list("data"=jaw_lower_array, "grouping"=ppt_info$sex),
+                             "upper.group"=list("data"=jaw_upper_array, "grouping"=ppt_info$group),
+                             "upper.sex"  =list("data"=jaw_upper_array, "grouping"=ppt_info$sex)), 
+                        function(x) CVA(x$data, 
+                                        groups=as.factor(vapply(dimnames(x$data)$participant, function(s) x$grouping[ ppt_info$ID_original == s ], character(1))), 
+                                        rounds=1000, cv=TRUE, p.adjust.method="bonferroni"), 
+                        mc.cores=4); # relatively slow and does not need that much RAM, so do them all in parallel (if possible)
+    #names(jaw_cva) <- c("lower", "upper");
+    end_time_cva_caching <- Sys.time();
+    
+    # Procrustes analysis:
+    gc();
+    start_time_procrustes_caching <- Sys.time();
+    jaw_procr <- mclapply(list("lower"=jaw_lower_array, "upper"=jaw_upper_array), function(x)
+    {
+      gpg.x <- gpagen(x, print.progress=FALSE);
+      gdf <- geomorph.data.frame("jaw"=gpg.x$coords, "group"=groups_m, "sex"=sex_m) # geomorph data frame
+      gpg.x <- NULL; gc(); # free up memory...
+      
+      pgp.m <- procD.lm(jaw ~ group + sex + group:sex, data = gdf, iter = 999, RRPP = TRUE,  print.progress=FALSE) # full model, randomize residuals
+      
+      pgp.null <- procD.lm(jaw ~ 1, data = gdf, iter = 999, RRPP = TRUE,  print.progress=FALSE) # null model randomize residuals
+      
+      #gpg.null.vs.full <- advanced.procD.lm(f1=jaw ~ 1, f2= ~ group + sex + group:sex, data=gdf, groups= ~ group*sex, pc.shape=TRUE, print.progress=FALSE, iter=9999);
+      
+      gpg.null.vs.full.anova <- anova(pgp.null, pgp.m, print.progress = FALSE); # model comparison
+      pgp.null <- NULL; gc(); # free up memory...
+      
+      #gpg.null.vs.full.pairwise <- pairwise(pgp.m, groups = interaction(gdf$group, gdf$sex), covariate = NULL); # pairwise comparisons
+      #summary(PW, test.type = "dist", confidence = 0.95, stat.table = TRUE)
+      gpg.null.vs.full.pairwise <- summary(pairwise(pgp.m, groups = interaction(gdf$group, gdf$sex), covariate = NULL), confidence = 0.95, stat.table = TRUE); # pairwise comparisons
+
+      return (list("full.model"=pgp.m, 
+                   #"null.model"=pgp.null,
+                   "null.vs.full.anova"=gpg.null.vs.full.anova, 
+                   "null.vs.full.pairwise"=gpg.null.vs.full.pairwise));
+    }, mc.cores=2); # needs a lot of RAM but it is relatively fast...
+    end_time_procrustes_caching <- Sys.time();
+    
+    # Save the results:
+    save(groups_m, sex_m, jaw_cva, jaw_procr, file="./cache/3D-coords-CVA+PCA.RData", compress="xz", compression_level=9);
+    
+    # Clean-up memory:
+    rm(jaw_lower, jaw_upper, jaw_upper_array, jaw_lower_array); gc();
+  } else
+  {
+    stop("The script cannot be compiled due to missing input data!\n");
+  }
+} else
+{
+  load("./cache/3D-coords-CVA+PCA.RData");
+}
+```
+
+---
+
+## Introduction
+
+This is an `Rmarkdown` script that complements the main `Rmarkdown` script ["**Supplementary Results 1** accompaying the paper *Weak biases emerging from vocal tract anatomy shape the repeated transmission of vowels*."](./SupplementaryResults1.html).
+This script produces the results for the actual 3D intra-oral scanning data for our *ArtiVarK* participants (more precisely, [Section **3.3.4. 3D coordinates** of the **Supplementary Results 1**](./SupplementaryResults1.html#d-coordinates)). 
+
+However, because this is very high-quality information that may (potentially) be used to reconstruct in great details the inside of our participants' mouth (more precisely, the anterior part of the upper and lower jaws), we decided to ***not make these data publicly available*** at this time.
+Therefore, this part of our analysis ***cannot be reproduced*** at this time (due to the absence of the primary data), but we do provide the fully-working script, as well as the compiled `HTML` document that contains the results and plots, so that it can be inspected and re-used.
+
+Just as the main script, this is released under a [GPLv2 license](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html).
+
+```
+This script contains the analyses discussed in the paper.
+Copyright (C) 2017-2019, Dan Dediu (with contributions by Scott R. Moisik)
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+```
+
+This document was generated with:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+pander(sessionInfo(), compact=TRUE);
+```
+
+and due to possible changes between `R` and package version, cannot be guaranteed to compile or run correclty with other versions (e.g., there are serious changes for package `geomorph` in version `3.1.0` that affected the Procrustes ANOVAs).
+
+
+```{r load the data, echo=FALSE, message=FALSE, warning=FALSE}
+# Plotting: colors and symbols for the four groups:
+group_col <- c("Ca"=scales::alpha("black",alpha=0.75), "NI"=scales::alpha("blue",alpha=0.75), "SI"=scales::alpha("magenta",alpha=0.75), "C"=scales::alpha("red",alpha=0.75));
+group_pch <- c("Ca"=21, "NI"=24, "SI"=25, "C"=22);
+
+# Plotting: colors and symbols for the two sexes:
+sex_col <- c("F"=scales::alpha("red",alpha=0.75), "M"=scales::alpha("blue",alpha=0.75));
+sex_pch <- c("F"=21, "M"=24);
+```
+
+---
+
+### The Data: *3D coordinates of the vertices* for the *lower* and *upper* jaws separately
+
+These are contained in the XZ-compressed TAB-separated files `./data/vertex_lower_jaw.tsv.xz` and `./data/vertex_upper_jaw.tsv.xz` respectively (**not provided at this time due to privacy concerns**), where the first column is the participant `ID` and the following columns represent the (x,y,z) vertex coordinates (first, all the *x* coordinates, followed by all the *y* and then all the *z* coordinates). 
+Please note that these are not the raw vertices (as exported by the IOS software) but are registered against a reference scan using *non-rigid registration*[^1].
+
+[^1]: These non-rigid registration techniques try to find the best fit between two shapes, also allowing non-uniform mapping (i.e., small deformations), such that the *Hausdorff distance* between them is minimized. Given that there is no *a priori* reference scan to use as reference, we ran registrations using each of the 96 scans as reference in turn, but the results are extremely similar regardless of the reference used; thus, we randomly picked one participant as the reference here. The non-rigid registration was computed using the algorithm developed and posted on the *Mathworks® File Exchange* by Christopher on March 26, 2015, available at [https://www.mathworks.com/matlabcentral/fileexchange/50269-distancevertex2mesh-mesh--vertex-](https://www.mathworks.com/matlabcentral/fileexchange/50269-distancevertex2mesh-mesh--vertex-) .
+
+Continuing the section numbering from the main document's section [**3.3.4. 3D coordinates**](./SupplementaryResults1.html#d-coordinates):
+
+---
+
+## 3.3.4. Results
+
+### 3.3.4.1. CVA
+
+#### 3.3.4.1.1. By group
+
+
+##### 3.3.4.1.1.1. The lower jaw
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, fig.height=5, fig.cap="Percent variance explained by the first three Canonical Variates."}
+# Variance explained by the canonical roots:
+barplot(jaw_cva$lower.group$Var[,"% Variance"], names.arg=paste0("CV ",1:3), ylab="% variance explained");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=7, fig.cap="Participants in the CV1 x CV2 space showing the a priori groups with the convex hulls and the 95% ellipses."}
+# plot the CVA:
+# CVA1 x CVA2:
+plot(jaw_cva$lower.group$CVscores[,c("CV 1","CV 2")], 
+     bg=group_col[rownames(jaw_cva$lower.group$CVscores)], col="black", 
+     pch=group_pch[rownames(jaw_cva$lower.group$CVscores)],
+     xlab=paste0("1st canonical axis (", paste(round(jaw_cva$lower.group$Var[1,2],1),"% of variance explained)")),
+     ylab=paste0("2nd canonical axis (", paste(round(jaw_cva$lower.group$Var[2,2],1),"% of variance explained)")));
+# add covex hull and 80% ellipses:
+for(i in levels(groups_m))
+{
+  # convex hull:
+  k <- chull(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, 1:2]);
+  lines(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 1"][c(k, k[1])], 
+        jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 2"][c(k, k[1])], 
+        col=group_col[i], lwd=1);
+  
+  ## 99% ellipse:
+  #dataEllipse(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 1"], 
+  #            jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 2"],
+  #            col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.01, center.pch=4,
+  #            add=TRUE, levels=0.99, robust=TRUE, plot.points=FALSE);
+  
+  # 95% ellipse:
+  dataEllipse(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 1"], 
+              jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 2"],
+              col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.05, center.pch=NULL, # center already plotted
+              add=TRUE, levels=0.95, robust=TRUE, plot.points=FALSE);
+}
+# legend:
+legend("bottomleft", legend=names(group_col), pch=group_pch, col="black", pt.bg=group_col);
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=7, fig.cap="Participants in the CV2 x CV3 space showing the a priori groups with the convex hulls and the 95% ellipses."}
+# CVA2 x CVA3:
+plot(jaw_cva$lower.group$CVscores[,c("CV 2","CV 3")], 
+     bg=group_col[rownames(jaw_cva$lower.group$CVscores)], col="black", 
+     pch=group_pch[rownames(jaw_cva$lower.group$CVscores)],
+     xlab=paste0("2nd canonical axis (", paste(round(jaw_cva$lower.group$Var[2,2],1),"% of variance explained)")),
+     ylab=paste0("3rd canonical axis (", paste(round(jaw_cva$lower.group$Var[3,2],1),"% of variance explained)")));
+# add covex hull and 80% ellipses:
+for(i in levels(groups_m))
+{
+  # convex hull:
+  k <- chull(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, 2:3]);
+  lines(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 2"][c(k, k[1])], 
+        jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 3"][c(k, k[1])], 
+        col=group_col[i], lwd=1);
+  
+  ## 99% ellipse:
+  #dataEllipse(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 2"], 
+  #            jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 3"],
+  #            col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.01, center.pch=4,
+  #            add=TRUE, levels=0.99, robust=TRUE, plot.points=FALSE);
+  
+  # 95% ellipse:
+  dataEllipse(jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 2"], 
+              jaw_cva$lower.group$CVscores[rownames(jaw_cva$lower.group$CVscores)==i, "CV 3"],
+              col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.05, center.pch=NULL, # center already plotted
+              add=TRUE, levels=0.95, robust=TRUE, plot.points=FALSE);
+}
+# legend:
+legend("bottomleft", legend=names(group_col), pch=group_pch, col="black", pt.bg=group_col);
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=6, fig.cap="Histogram of the individual Canonical Variate scores on CV1-CV3 by group."}
+# histogram per group:
+tmp <- data.frame("value"=c(jaw_cva$lower.group$CVscores[,"CV 1"], jaw_cva$lower.group$CVscores[,"CV 2"], jaw_cva$lower.group$CVscores[,"CV 3"]),
+                  "group"=rep(as.character(groups_m), times=3), "cv"=rep(c("CV1","CV2","CV3"), each=length(groups_m))); 
+histogram(~ tmp$value | tmp$cv + tmp$group, layout=c(3, length(levels(groups_m))), xlab="CV score", col="skyblue");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=15, fig.height=8, fig.cap="Typicality probabilities of belonging to a group, also showing the a priori group (top squares) and the group the participant has been assigned to (top circles). The bottom solid line shows the 5% threshold below which a participant is considered an 'outlier' (i.e., not assigned to any group), while the top dotted line represents the probability of 1.0. Participants are ordered by their *a priori* and *a posteriorily assigned* groups."}
+# Typicality probabilities and resulting classifications (all specimens with a probability of < 0.01 are labeled "outliers"):
+typprobs <- typprobClass(jaw_cva$lower.group$CVscores, groups=as.factor(rownames(jaw_cva$lower.group$CVscores)), method="wilson", small=TRUE, robust="mcd", outlier=alpha.level);
+print(typprobs);
+jaw_cva_lower.group_posterior <- cbind("ID"=rownames(jaw_cva$lower.group$posterior), 
+                                 "group"=typprobs$groups,
+                                 "assigned.group"=typprobs$groupaffinCV,
+                                 as.data.frame(typprobs$probsCV),
+                                 "total"=rowSums(typprobs$probsCV));
+jaw_cva_lower.group_posterior <- jaw_cva_lower.group_posterior[ order(jaw_cva_lower.group_posterior$group, jaw_cva_lower.group_posterior$assigned.group, jaw_cva_lower.group_posterior$ID), ];
+y_max <- max(colSums(t(jaw_cva_lower.group_posterior[,c("C","Ca","NI","SI")])));
+mp <- barplot(t(jaw_cva_lower.group_posterior[,c("C","Ca","NI","SI")]), ylab="Typicality probabilities for a participant to belong to the given groups",
+              names.arg=jaw_cva_lower.group_posterior$ID, 
+              las=2, col=c(group_col[colnames(typprobs$probsCV)]), ylim=c(0.0, y_max + 0.5));
+abline(h=alpha.level, col="black", lty="solid", lwd=1);
+abline(h=1.00, col="black", lty="dotted", lwd=1);
+points(mp, rep(y_max + alpha.level, length(mp)), cex=1.4, pch=22, col="black", bg=group_col[as.character(jaw_cva_lower.group_posterior$group)]);
+points(mp, rep(y_max + 0.08, length(mp)), cex=1.4, pch=21, col="black", bg=c(group_col,"none"="gray90")[as.character(jaw_cva_lower.group_posterior$assigned.group)]);
+legend("top", legend=c(names(group_col), '"outlier"'), fill=c(group_col, "gray90"), bg=scales::alpha("white",alpha=0.50), title="Groups");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=9, fig.cap="Pairwise differences between group means for the lower jaw. Each panel shows the differences between two group means by plotting the corresponding 3D vertices and connecting them with a black segment; the colors represent the groups (*Ca* = black, *NI* = blue, *SI* = magenta and *C* = red). These plots are interactive and can be zoomed and rotated using the mouse (the rotation and zooming is synchronized between the panels)."}
+# Visualise the differences betwee group means:
+invisible(open3d());
+invisible(mfrow3d(nr=3, nc=2, byrow=TRUE, sharedMouse=TRUE));
+for( i in 1:(length(group_col)-1) )
+{ 
+  for( j in (i+1):length(group_col) )
+  {
+    next3d();
+    deformGrid3d(jaw_cva$lower.group$groupmeans[,,i], jaw_cva$lower.group$groupmeans[,,j],
+                 col1=group_col[i], col2=group_col[j], lcol="gray20", type="s", 
+                 ask=FALSE, add=TRUE);
+    #legend3d("topright", c(names(group_col)[i],names(group_col)[j]), 
+    #         fill=c(group_col[i],group_col[j]), cex=1.0);
+  }
+}
+rglwidget(elementId="diffsLowerJawGroup");
+```
+
+
+##### 3.3.4.1.1.2. The upper jaw
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, fig.height=5, fig.cap="Percent variance explained by the first three Canonical Variates."}
+# Variance explained by the canonical roots:
+barplot(jaw_cva$upper.group$Var[,"% Variance"], names.arg=paste0("CV ",1:3), ylab="% variance explained");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=7, fig.cap="Participants in the CV1 x CV2 space showing the a priori groups with the convex hulls and the 95% ellipses."}
+# plot the CVA:
+# CVA1 x CVA2:
+plot(jaw_cva$upper.group$CVscores[,c("CV 1","CV 2")], 
+     bg=group_col[rownames(jaw_cva$upper.group$CVscores)], col="black", 
+     pch=group_pch[rownames(jaw_cva$upper.group$CVscores)],
+     xlab=paste0("1st canonical axis (", paste(round(jaw_cva$upper.group$Var[1,2],1),"% of variance explained)")),
+     ylab=paste0("2nd canonical axis (", paste(round(jaw_cva$upper.group$Var[2,2],1),"% of variance explained)")));
+# add covex hull and 80% ellipses:
+for(i in levels(groups_m))
+{
+  # convex hull:
+  k <- chull(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, 1:2]);
+  lines(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 1"][c(k, k[1])], 
+        jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 2"][c(k, k[1])], 
+        col=group_col[i], lwd=1);
+  
+  ## 99% ellipse:
+  #dataEllipse(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 1"], 
+  #            jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 2"],
+  #            col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.01, center.pch=4,
+  #            add=TRUE, levels=0.99, robust=TRUE, plot.points=FALSE);
+  
+  # 95% ellipse:
+  dataEllipse(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 1"], 
+              jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 2"],
+              col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.05, center.pch=NULL, # center already plotted
+              add=TRUE, levels=0.95, robust=TRUE, plot.points=FALSE);
+}
+# legend:
+legend("bottomleft", legend=names(group_col), pch=group_pch, col="black", pt.bg=group_col);
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=7, fig.cap="Participants in the CV2 x CV3 space showing the a priori groups with the convex hulls and the 95% ellipses."}
+# CVA2 x CVA3:
+plot(jaw_cva$upper.group$CVscores[,c("CV 2","CV 3")], 
+     bg=group_col[rownames(jaw_cva$upper.group$CVscores)], col="black", 
+     pch=group_pch[rownames(jaw_cva$upper.group$CVscores)],
+     xlab=paste0("2nd canonical axis (", paste(round(jaw_cva$upper.group$Var[2,2],1),"% of variance explained)")),
+     ylab=paste0("3rd canonical axis (", paste(round(jaw_cva$upper.group$Var[3,2],1),"% of variance explained)")));
+# add covex hull and 80% ellipses:
+for(i in levels(groups_m))
+{
+  # convex hull:
+  k <- chull(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, 2:3]);
+  lines(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 2"][c(k, k[1])], 
+        jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 3"][c(k, k[1])], 
+        col=group_col[i], lwd=1);
+  
+  ## 99% ellipse:
+  #dataEllipse(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 2"], 
+  #            jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 3"],
+  #            col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.01, center.pch=4,
+  #            add=TRUE, levels=0.99, robust=TRUE, plot.points=FALSE);
+  
+  # 95% ellipse:
+  dataEllipse(jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 2"], 
+              jaw_cva$upper.group$CVscores[rownames(jaw_cva$upper.group$CVscores)==i, "CV 3"],
+              col=group_col[i], lwd=1, lty="dotted", fill=TRUE, fill.alpha=0.05, center.pch=NULL, # center already plotted
+              add=TRUE, levels=0.95, robust=TRUE, plot.points=FALSE);
+}
+# legend:
+legend("bottomleft", legend=names(group_col), pch=group_pch, col="black", pt.bg=group_col);
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=6, fig.cap="Histogram of the individual Canonical Variate scores on CV1-CV3 by group."}
+# histogram per group:
+tmp <- data.frame("value"=c(jaw_cva$upper.group$CVscores[,"CV 1"], jaw_cva$upper.group$CVscores[,"CV 2"], jaw_cva$upper.group$CVscores[,"CV 3"]),
+                  "group"=rep(as.character(groups_m), times=3), "cv"=rep(c("CV1","CV2","CV3"), each=length(groups_m))); 
+histogram(~ tmp$value | tmp$cv + tmp$group, layout=c(3, length(levels(groups_m))), xlab="CV score", col="skyblue");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=15, fig.height=8, fig.cap="Typicality probabilities of belonging to a group, also showing the a priori group (top squares) and the group the participant has been assigned to (top circles). The bottom solid line shows the 5% threshold below which a participant is considered an 'outlier' (i.e., not assigned to any group), while the top dotted line represents the probability of 1.0. Participants are ordered by their *a priori* and *a posteriorily assigned* groups."}
+# Typicality probabilities and resulting classifications (all specimens with a probability of < 0.01 are labeled "outliers"):
+typprobs <- typprobClass(jaw_cva$upper.group$CVscores, groups=as.factor(rownames(jaw_cva$upper.group$CVscores)), method="wilson", small=TRUE, robust="mcd", outlier=alpha.level);
+print(typprobs);
+jaw_cva_upper.group_posterior <- cbind("ID"=rownames(jaw_cva$upper.group$posterior), 
+                                 "group"=typprobs$groups,
+                                 "assigned.group"=typprobs$groupaffinCV,
+                                 as.data.frame(typprobs$probsCV),
+                                 "total"=rowSums(typprobs$probsCV));
+jaw_cva_upper.group_posterior <- jaw_cva_upper.group_posterior[ order(jaw_cva_upper.group_posterior$group, jaw_cva_upper.group_posterior$assigned.group, jaw_cva_upper.group_posterior$ID), ];
+y_max <- max(colSums(t(jaw_cva_upper.group_posterior[,c("C","Ca","NI","SI")])));
+mp <- barplot(t(jaw_cva_upper.group_posterior[,c("C","Ca","NI","SI")]), ylab="Typicality probabilities for a participant to belong to the given groups",
+              names.arg=jaw_cva_upper.group_posterior$ID, 
+              las=2, col=c(group_col[colnames(typprobs$probsCV)]), ylim=c(0.0, y_max + 0.5));
+abline(h=alpha.level, col="black", lty="solid", lwd=1);
+abline(h=1.00, col="black", lty="dotted", lwd=1);
+points(mp, rep(y_max + alpha.level, length(mp)), cex=1.4, pch=22, col="black", bg=group_col[as.character(jaw_cva_upper.group_posterior$group)]);
+points(mp, rep(y_max + 0.08, length(mp)), cex=1.4, pch=21, col="black", bg=c(group_col,"none"="gray90")[as.character(jaw_cva_upper.group_posterior$assigned.group)]);
+legend("top", legend=c(names(group_col), '"outlier"'), fill=c(group_col, "gray90"), bg=scales::alpha("white",alpha=0.50), title="Groups");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=9, fig.cap="Pairwise differences between group means for the upper jaw. Each panel shows the differences between two group means by plotting the corresponding 3D vertices and connecting them with a black segment; the colors represent the groups (*Ca* = black, *NI* = blue, *SI* = magenta and *C* = red). These plots are interactive and can be zoomed and rotated using the mouse (the rotation and zooming is synchronized between the panels)."}
+# Visualise the differences betwee group means:
+invisible(open3d());
+invisible(mfrow3d(nr=3, nc=2, byrow=TRUE, sharedMouse=TRUE));
+for( i in 1:(length(group_col)-1) )
+{ 
+  for( j in (i+1):length(group_col) )
+  {
+    next3d();
+    deformGrid3d(jaw_cva$upper.group$groupmeans[,,i], jaw_cva$upper.group$groupmeans[,,j],
+                 col1=group_col[i], col2=group_col[j], lcol="gray20", type="s", 
+                 ask=FALSE, add=TRUE);
+    #legend3d("topright", c(names(group_col)[i],names(group_col)[j]), 
+    #         fill=c(group_col[i],group_col[j]), cex=1.0);
+  }
+}
+rglwidget(elementId="diffsUpperJawGroup");
+```
+
+
+#### 3.3.4.1.2. By sex
+
+
+##### 3.3.4.1.2.1. The lower jaw
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=3, fig.height=3, fig.cap="Histogram of the individual Canonical Variate scores by sex"}
+# histogram per group:
+tmp <- data.frame("value"=jaw_cva$lower.sex$CVscores[,"CV 1"], "group"=rownames(jaw_cva$lower.sex$CVscores)); 
+histogram(~ tmp$value | tmp$group, xlab="CV score", col="skyblue", layout=c(1,2));
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=15, fig.height=8, fig.cap="Typicality probabilities of belonging to a group, also showing the a priori group (top squares) and the group the participant has been assigned to (top circles). The bottom solid line shows the 5% threshold below which a participant is considered an 'outlier' (i.e., not assigned to any group), while the top dotted line represents the probability of 1.0. Participants are ordered by their *a priori* and *a posteriorily assigned* groups."}
+# Typicality probabilities and resulting classifications (all specimens with a probability of < 0.01 are labeled "outliers"):
+typprobs <- typprobClass(jaw_cva$lower.sex$CVscores, groups=as.factor(rownames(jaw_cva$lower.sex$CVscores)), method="wilson", small=TRUE, robust="mcd", outlier=alpha.level);
+print(typprobs);
+jaw_cva_lower.sex_posterior <- cbind("ID"=rownames(jaw_cva$lower.sex$posterior), 
+                                 "group"=typprobs$groups,
+                                 "assigned.group"=typprobs$groupaffinCV,
+                                 as.data.frame(typprobs$probsCV),
+                                 "total"=rowSums(typprobs$probsCV));
+jaw_cva_lower.sex_posterior <- jaw_cva_lower.sex_posterior[ order(jaw_cva_lower.sex_posterior$group, jaw_cva_lower.sex_posterior$assigned.group, jaw_cva_lower.sex_posterior$ID), ];
+y_max <- max(colSums(t(jaw_cva_lower.sex_posterior[,c("F","M")])));
+mp <- barplot(t(jaw_cva_lower.sex_posterior[,c("F","M")]), ylab="Typicality probabilities for a participant to belong to the given groups",
+              names.arg=jaw_cva_lower.sex_posterior$ID, 
+              las=2, col=c(sex_col[colnames(typprobs$probsCV)]), ylim=c(0.0, y_max + 0.5));
+abline(h=alpha.level, col="black", lty="solid", lwd=1);
+abline(h=1.00, col="black", lty="dotted", lwd=1);
+points(mp, rep(y_max + alpha.level, length(mp)), cex=1.4, pch=22, col="black", bg=sex_col[as.character(jaw_cva_lower.sex_posterior$group)]);
+points(mp, rep(y_max + 0.08, length(mp)), cex=1.4, pch=21, col="black", bg=c(sex_col,"none"="gray90")[as.character(jaw_cva_lower.sex_posterior$assigned.group)]);
+legend("top", legend=c(names(sex_col), '"outlier"'), fill=c(sex_col, "gray90"), bg=scales::alpha("white",alpha=0.50), title="Sex");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=3, fig.height=3, fig.cap="Pairwise differences between sex means for the lower jaw. The panel shows the differences between the two sex means by plotting the corresponding 3D vertices and connecting them with a black segment; the colors represent the sexes (*F* = red and *M* = blue). This plots is interactive and can be zoomed and rotated using the mouse."}
+# Visualise the differences betwee group means:
+invisible(open3d());
+invisible(mfrow3d(nr=1, nc=1));
+deformGrid3d(jaw_cva$lower.sex$groupmeans[,,"F"], jaw_cva$lower.sex$groupmeans[,,"M"],
+             col1=sex_col["F"], col2=sex_col["M"], lcol="gray20", type="s", 
+             ask=FALSE, add=TRUE);
+#legend3d("topright", c(names(group_col)[i],names(group_col)[j]), 
+#         fill=c(group_col[i],group_col[j]), cex=1.0);
+rglwidget(elementId="diffsLowerJawSex");
+```
+
+
+##### 3.3.4.1.2.2. The upper jaw
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=3, fig.height=3, fig.cap="Histogram of the individual Canonical Variate scores by sex"}
+# histogram per group:
+tmp <- data.frame("value"=jaw_cva$upper.sex$CVscores[,"CV 1"], "group"=rownames(jaw_cva$upper.sex$CVscores)); 
+histogram(~ tmp$value | tmp$group, xlab="CV score", col="skyblue", layout=c(1,2));
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=15, fig.height=8, fig.cap="Typicality probabilities of belonging to a group, also showing the a priori group (top squares) and the group the participant has been assigned to (top circles). The bottom solid line shows the 5% threshold below which a participant is considered an 'outlier' (i.e., not assigned to any group), while the top dotted line represents the probability of 1.0. Participants are ordered by their *a priori* and *a posteriorily assigned* groups."}
+# Typicality probabilities and resulting classifications (all specimens with a probability of < 0.01 are labeled "outliers"):
+typprobs <- typprobClass(jaw_cva$upper.sex$CVscores, groups=as.factor(rownames(jaw_cva$upper.sex$CVscores)), method="wilson", small=TRUE, robust="mcd", outlier=alpha.level);
+print(typprobs);
+jaw_cva_upper.sex_posterior <- cbind("ID"=rownames(jaw_cva$upper.sex$posterior), 
+                                 "group"=typprobs$groups,
+                                 "assigned.group"=typprobs$groupaffinCV,
+                                 as.data.frame(typprobs$probsCV),
+                                 "total"=rowSums(typprobs$probsCV));
+jaw_cva_upper.sex_posterior <- jaw_cva_upper.sex_posterior[ order(jaw_cva_upper.sex_posterior$group, jaw_cva_upper.sex_posterior$assigned.group, jaw_cva_upper.sex_posterior$ID), ];
+y_max <- max(colSums(t(jaw_cva_upper.sex_posterior[,c("F","M")])));
+mp <- barplot(t(jaw_cva_upper.sex_posterior[,c("F","M")]), ylab="Typicality probabilities for a participant to belong to the given groups",
+              names.arg=jaw_cva_upper.sex_posterior$ID, 
+              las=2, col=c(sex_col[colnames(typprobs$probsCV)]), ylim=c(0.0, y_max + 0.5));
+abline(h=alpha.level, col="black", lty="solid", lwd=1);
+abline(h=1.00, col="black", lty="dotted", lwd=1);
+points(mp, rep(y_max + alpha.level, length(mp)), cex=1.4, pch=22, col="black", bg=sex_col[as.character(jaw_cva_upper.sex_posterior$group)]);
+points(mp, rep(y_max + 0.08, length(mp)), cex=1.4, pch=21, col="black", bg=c(sex_col,"none"="gray90")[as.character(jaw_cva_upper.sex_posterior$assigned.group)]);
+legend("top", legend=c(names(sex_col), '"outlier"'), fill=c(sex_col, "gray90"), bg=scales::alpha("white",alpha=0.50), title="Sex");
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=3, fig.height=3, fig.cap="Pairwise differences between sex means for the upper jaw. The panel shows the differences between the two sex means by plotting the corresponding 3D vertices and connecting them with a black segment; the colors represent the sexes (*F* = red and *M* = blue). This plots is interactive and can be zoomed and rotated using the mouse."}
+# Visualise the differences betwee group means:
+invisible(open3d());
+invisible(mfrow3d(nr=1, nc=1));
+deformGrid3d(jaw_cva$upper.sex$groupmeans[,,"F"], jaw_cva$upper.sex$groupmeans[,,"M"],
+             col1=sex_col["F"], col2=sex_col["M"], lcol="gray20", type="s", 
+             ask=FALSE, add=TRUE);
+#legend3d("topright", c(names(group_col)[i],names(group_col)[j]), 
+#         fill=c(group_col[i],group_col[j]), cex=1.0);
+rglwidget(elementId="diffsUpperJawSex");
+```
+
+
+---
+
+### 3.3.4.2. Procrustes analysis
+
+To better separate size from shape (especially important when comparing the two sexes, but also *a priori* potentially relevant between groups), we performed various types of *Procrustes Analyses* for the lower and upper jaw separately:
+
+  1. *Procrustes ANOVA with permutation* for the "full" model, where we predict shape from *group*, *sex*, and their interaction (i.e., `~ group + sex + group:sex`), and
+  2. we *compared the null and "full" models* performing pairwise tests for the differences between group means.
+
+
+#### 3.3.4.2.1. The lower jaw
+
+Procrustes ANOVA with permutation (for the "full" model ~ group + sex + group:sex):
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+print(jaw_procr$lower$full.model$aov.table);
+
+d <- do.call(rbind, lapply(1:nrow(jaw_procr$lower$full.model$ANOVA$Fs), function(i)
+{
+  tmp <- .compute.perm.95CI(observed=jaw_procr$lower$full.model$ANOVA$Fs[i,1], permuted=jaw_procr$lower$full.model$ANOVA$Fs[i,-1], );
+  data.frame("IV"=rownames(jaw_procr$lower$full.model$ANOVA$Fs)[i],
+             "F.obs"=sprintf("%.2f",jaw_procr$lower$full.model$ANOVA$Fs[i,1]),
+             "F.95.CI"=paste0("(", sprintf("%.2f",tmp["low"]), ", ", sprintf("%.2f",tmp["high"]), ")"));
+}));
+knitr::kable(d, row.names=FALSE, col.names=c("IV (or interaction)", "F (observed)", "95% permutation interval"), 
+             caption="Observed F value and 95% permuted interval (the interval containing 95% of the F values obtained when permuting the data, i.e.,  if the null hypothesis were true).");
+  
+#summary(jaw_procr$lower$procD.lm);
+#plot(jaw_procr$lower$procD.lm, type = "diagnostics", outliers = TRUE);
+```
+
+The "null" vs "full" (i.e, ~ group + sex + group:sex) models with pairwise tests for differences between group means, and for angular differences in slopes between groups:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(jaw_procr$lower$null.vs.full.anova);
+print(jaw_procr$lower$null.vs.full.pairwise);
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=7, fig.cap="Plot (in the PC1 x PC2 space) of the lower jaw fitted values by group and sex with convex hull and 95% ellipses (solid lines=*M*, dotted lines=*F*)."}
+group.for.ppt <- as.character(groups_m[ as.character(rownames(jaw_procr$lower$full.model$fitted))]);
+sex.for.ppt   <- as.character(sex_m[ as.character(rownames(jaw_procr$lower$full.model$fitted))]);
+tmp <- plot(jaw_procr$lower$full.model, type="PC", 
+     bg=group_col[group.for.ppt], pch=sex_pch[sex.for.ppt]);
+# add covex hull and 80% ellipses:
+sex.and.group <- expand.grid("group"=unique(group.for.ppt), "sex"=unique(sex.for.ppt), stringsAsFactors=FALSE);
+for(i in 1:nrow(sex.and.group))
+{
+  s <- tmp$PC.points[group.for.ppt == sex.and.group$group[i] & sex.for.ppt == sex.and.group$sex[i],];
+  # convex hull:
+  k <- chull(s[,c("PC1","PC2")]);
+  lines(s[c(k, k[1]),"PC1"], s[c(k, k[1]),"PC2"], col=group_col[sex.and.group$group[i]], lwd=2, lty=ifelse(sex.and.group$sex[i]=="F", "dotted", "solid"));
+  
+  # 95% ellipse:
+  dataEllipse(s[,"PC1"], s[,"PC2"], col=group_col[sex.and.group$group[i]], lwd=1, lty=ifelse(sex.and.group$sex[i]=="F", "dotted", "solid"), 
+              fill=TRUE, fill.alpha=0.01, center.pch=4, add=TRUE, levels=0.95, robust=TRUE, plot.points=FALSE);
+}
+# legend:
+legend("topright", legend=c(names(group_col), names(sex_pch)), col=c(group_col,rep("gray25",length(sex_pch))), pch=c(rep(15,length(group_col)),sex_pch), bg=scales::alpha("gray95",0.5));
+```
+
+**Interpretation:** 
+
+  - the *group*, *sex* and their interaction significantly explain the variation in shape (*p* = `r jaw_procr$lower$null.vs.full.anova$table[2,"P"]`);
+  - the main effects are significant (for *group*, *p* = `r jaw_procr$lower$full.model$aov.table["group","Pr(>F)"]` and for *sex*, *p* = `r jaw_procr$lower$full.model$aov.table["sex","Pr(>F)"]`), as is their interaction (*p* = `r jaw_procr$lower$full.model$aov.table["group:sex","Pr(>F)"]`);
+  - the *pairwise significant differences* between *mean distances* are: `r s <- rownames(jaw_procr$lower$null.vs.full.pairwise$summary.table[ jaw_procr$lower$null.vs.full.pairwise$summary.table[,"Pr > d"] < alpha.level, ]); paste0(s,collapse=", ")`.
+
+
+#### 3.3.4.2.2. The upper jaw
+
+Procrustes ANOVA with permutation (for the "full" model ~ group + sex + group:sex):
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+print(jaw_procr$upper$full.model$aov.table);
+
+d <- do.call(rbind, lapply(1:nrow(jaw_procr$upper$full.model$ANOVA$Fs), function(i)
+{
+  tmp <- .compute.perm.95CI(observed=jaw_procr$upper$full.model$ANOVA$Fs[i,1], permuted=jaw_procr$upper$full.model$ANOVA$Fs[i,-1], );
+  data.frame("IV"=rownames(jaw_procr$upper$full.model$ANOVA$Fs)[i],
+             "F.obs"=sprintf("%.2f",jaw_procr$upper$full.model$ANOVA$Fs[i,1]),
+             "F.95.CI"=paste0("(", sprintf("%.2f",tmp["low"]), ", ", sprintf("%.2f",tmp["high"]), ")"));
+}));
+knitr::kable(d, row.names=FALSE, col.names=c("IV (or interaction)", "F (observed)", "95% permutation interval"), 
+             caption="Observed F value and 95% permuted interval (the interval containing 95% of the F values obtained when permuting the data, i.e.,  if the null hypothesis were true).");
+
+#summary(jaw_procr$upper$procD.lm);
+#plot(jaw_procr$upper$procD.lm, type = "diagnostics", outliers = TRUE);
+```
+
+The "null" vs "full" (i.e, ~ group + sex + group:sex) models with pairwise tests for differences between group means, and for angular differences in slopes between groups:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(jaw_procr$upper$null.vs.full.anova);
+print(jaw_procr$upper$null.vs.full.pairwise);
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=7, fig.cap="Plot (in the PC1 x PC2 space) of the upper jaw fitted values by group and sex with convex hull and 95% ellipses (solid lines=*M*, dotted lines=*F*)."}
+group.for.ppt <- as.character(groups_m[ as.character(rownames(jaw_procr$upper$full.model$fitted))]);
+sex.for.ppt   <- as.character(sex_m[ as.character(rownames(jaw_procr$upper$full.model$fitted))]);
+tmp <- plot(jaw_procr$upper$full.model, type="PC", 
+     bg=group_col[group.for.ppt], pch=sex_pch[sex.for.ppt]);
+# add covex hull and 80% ellipses:
+sex.and.group <- expand.grid("group"=unique(group.for.ppt), "sex"=unique(sex.for.ppt), stringsAsFactors=FALSE);
+for(i in 1:nrow(sex.and.group))
+{
+  s <- tmp$PC.points[group.for.ppt == sex.and.group$group[i] & sex.for.ppt == sex.and.group$sex[i],];
+  # convex hull:
+  k <- chull(s[,c("PC1","PC2")]);
+  lines(s[c(k, k[1]),"PC1"], s[c(k, k[1]),"PC2"], col=group_col[sex.and.group$group[i]], lwd=2, lty=ifelse(sex.and.group$sex[i]=="F", "dotted", "solid"));
+  
+  # 95% ellipse:
+  dataEllipse(s[,"PC1"], s[,"PC2"], col=group_col[sex.and.group$group[i]], lwd=1, lty=ifelse(sex.and.group$sex[i]=="F", "dotted", "solid"), 
+              fill=TRUE, fill.alpha=0.01, center.pch=4, add=TRUE, levels=0.95, robust=TRUE, plot.points=FALSE);
+}
+# legend:
+legend("topright", legend=c(names(group_col), names(sex_pch)), col=c(group_col,rep("gray25",length(sex_pch))), pch=c(rep(15,length(group_col)),sex_pch), bg=scales::alpha("gray95",0.5));
+```
+
+**Interpretation:** 
+
+  - the *group*, *sex* and their interaction significantly explain the variation in shape (*p* = `r jaw_procr$upper$null.vs.full.anova$table[2,"P"]`);
+  - the main effects are signigicant (for *group*, *p* = `r jaw_procr$upper$full.model$aov.table["group","Pr(>F)"]` and for *sex*, *p* = `r jaw_procr$upper$full.model$aov.table["sex","Pr(>F)"]`), but their interaction is not (*p* = `r jaw_procr$upper$full.model$aov.table["group:sex","Pr(>F)"]`);
+  - the *pairwise significant differences* between *mean distances* are: `r s <- rownames(jaw_procr$upper$null.vs.full.pairwise$summary.table[ jaw_procr$upper$null.vs.full.pairwise$summary.table[,"Pr > d"] < alpha.level, ]); paste0(s,collapse=", ")`.
+
+
+---
+
+## 3.3.4.3. Summary and interpretation
+
+*CVA* for the 3D coordinates of the registered meshes of the upper and low jaws does recover the structure of the *groups* (lower: 75% accuracy; upper: 64%) and *sexes* (lower: 80%; upper: 85%).
+
+*Procrustes Analysis* (which looks at shape separately from size) also finds that *groups* and *sexes* are significantly different.
+
+
+
+
+
+

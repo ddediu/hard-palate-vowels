@@ -1,0 +1,5 @@
+The following installation kits are needed for running the simulations on a Windows 7 (or later) 64 bits:
+- JDK7 from Oracle (e.g., jdk-7u80-windows-x64.exe) -- please note that we didn't test it with JDK8 or later
+- MSVC2012-redistrib from Microsoft (e.g., vcredist_x64.exe)
+- Python 2.7 from python.org (e.g., python-2.7.14.amd64.msi) -- please note that we didn't test it with Python 3
+

@@ -1,0 +1,117 @@
+ID	ID_original	sex	group_detailed	group	age
+A03	100018	F	german	Ca	NA
+A04	100019	M	english	Ca	30
+A05	100020	F	english	Ca	32
+A06	100021	M	german	Ca	26
+A07	100022	M	german	Ca	28
+A08	100023	F	spanish	Ca	26
+A90	100024	F	spanish	Ca	27
+A91	100025	F	english	Ca	28
+A92	100026	M	spanish	Ca	27
+A10	1503101	M	south indian	SI	23
+A01	16	M	dutch	Ca	30
+A09	17	M	english	Ca	31
+A11	303002	F	north indian	NI	47
+A12	311010	F	dutch	Ca	20
+A13	312003	F	dutch	Ca	19
+A14	312004	M	dutch	Ca	40
+A15	316005	M	dutch	Ca	61
+A16	316007	M	north indian	NI	27
+A17	319009	M	south indian	SI	23
+A18	319011	M	dutch	Ca	38
+A19	321012	F	north indian	NI	27
+A20	323029	F	south indian	SI	22
+A21	325118	M	south indian	SI	24
+A22	330017	M	dutch	Ca	32
+A23	401019	M	dutch	Ca	19
+A24	401020	F	dutch	Ca	24
+A25	402023	F	dutch	Ca	23
+A26	409029	F	south indian	SI	24
+A27	409030	M	dutch	Ca	24
+A28	413034	F	english	Ca	32
+A29	413035	F	dutch	Ca	24
+A30	414038	F	dutch	Ca	24
+A31	416039	M	dutch	Ca	24
+A32	416040	F	dutch	Ca	31
+A33	416041	F	dutch	Ca	23
+A34	416042	F	dutch	Ca	33
+A35	420043	F	dutch	Ca	50
+A36	420044	M	dutch	Ca	18
+A37	420045	M	south indian	SI	24
+A38	420046	M	dutch	Ca	25
+A39	430050	M	dutch	Ca	27
+A40	430051	M	dutch	Ca	34
+A41	504053	F	dutch	Ca	25
+A42	507054	M	north indian	NI	30
+A43	511055	F	north indian	NI	24
+A44	511856	F	chinese	C	32
+A45	512070	M	dutch	Ca	43
+A46	520058	M	dutch	Ca	37
+A47	520060	F	dutch	Ca	21
+A48	520061	F	dutch	Ca	18
+A49	52074	F	dutch	Ca	24
+A50	521062	F	dutch	Ca	18
+A51	521063	F	dutch	Ca	20
+A52	521064	M	romanian	Ca	40
+A53	521066	M	dutch	Ca	42
+A54	521069	F	dutch	Ca	22
+A55	522068	F	dutch	Ca	22
+A56	525072	F	dutch	Ca	20
+A57	525073	M	dutch	Ca	20
+A58	528073	F	south indian	SI	22
+A59	528075	F	north indian	NI	26
+A60	528077	M	dutch	Ca	20
+A02	53	F	english	Ca	61
+A61	608081	F	chinese	C	23
+A62	608082	M	chinese	C	27
+A63	613097	M	south indian	SI	26
+A64	615083	F	chinese	C	33
+A95	615084	F	german	Ca	31
+A65	615085	M	chinese	C	33
+A66	615123	M	north indian	NI	26
+A67	616087	M	chinese	C	24
+A68	616092	M	north indian	NI	26
+A69	616093	M	south indian	SI	23
+A70	616095	M	north indian	NI	29
+A71	616096	M	south indian	SI	23
+A72	616097	M	chinese	C	27
+A73	616098	M	south indian	SI	22
+A74	616106	M	south indian	SI	22
+A75	617088	M	south indian	SI	23
+A76	618099	M	north indian	NI	26
+A77	619100	M	chinese	C	26
+A78	622102	M	south indian	SI	23
+A79	622103	M	chinese	C	36
+A80	622104	M	south indian	SI	24
+A81	622105	M	north indian	NI	25
+A82	623107	M	north indian	NI	21
+A83	625114	M	south indian	SI	36
+A84	625115	M	south indian	SI	24
+A85	625117	M	north indian	NI	24
+A86	625119	M	south indian	SI	22
+A87	629120	M	chinese	C	30
+A96	652116	M	south indian	SI	28
+A88	706125	M	north indian	NI	19
+A97	806135	M	north indian	NI	25
+T01	S1	M		US	34
+T10	S10	M		US	30
+T11	S11	F		US	30
+T12	S12	M		US	27
+T13	S13	F		US	23
+T14	S14	F		US	24
+T15	S15	F		US	21
+T16	S16	F		US	26
+T17	S17	M		US	19
+T18	S18	M		US	46
+T19	S19	M		US	25
+T02	S2	F		US	28
+T20	S20	F		US	38
+T21	S21	M		US	25
+T22	S22	M		US	48
+T03	S3	F		US	20
+T04	S4	M		US	18
+T05	S5normal	M		US	51
+T06	S6	M		US	31
+T07	S7	F		US	25
+T08	S8	F		US	35
+T09	S9	M		US	32
